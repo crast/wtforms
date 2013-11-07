@@ -1,6 +1,13 @@
 WTForms Changelog
 =================
 
+Version 1.0.6
+-------------
+Not yet released.
+
+- Fix a bug with newer versions of the python-dateutil library.
+- Minor documentation fixes.
+
 Version 1.0.5
 -------------
 Released September 10, 2013
