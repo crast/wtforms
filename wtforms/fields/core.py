@@ -279,12 +279,14 @@ class Field(object):
         self.process_errors = []
 
         if self.short_name in defaults:
-            self.data = defaults[self.short_name]
+            default = defaults[self.short_name]
         else:
             try:
-                self.data = self.default()
+                default = self.default()
             except TypeError:
-                self.data = self.default
+                default = self.default
+
+        self.process_default(default)
 
         if obj is not None and hasattr(obj, self.short_name):
             self.object_data = getattr(obj, self.short_name)
@@ -316,9 +318,18 @@ class Field(object):
         """
         Process the data applied to this field and store the result.
 
-        Data will be coerced
+        Data will be coerced.
 
-        :param value: The python object containing the value to process.
+        :param value: The value to process.
+        """
+        self.data = value
+
+    def process_default(self, value):
+        """
+        Process a default value and store the result.
+
+        This exists because there's sometimes a need for fields to
+        process a default value (although rare)
         """
         self.data = value
 
@@ -517,6 +528,9 @@ class SelectMultipleField(SelectField):
             self.data = list(self.coerce(v) for v in value)
         except (ValueError, TypeError):
             self.data = None
+
+    def process_default(self, value):
+        self.process_data(value)
 
     def process_formdata(self, valuelist):
         try:
