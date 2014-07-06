@@ -95,7 +95,7 @@ class BaseForm(object):
         for name, field in iteritems(self._fields):
             field.populate_obj(obj, name)
 
-    def process(self, formdata=None, obj=None, data=None, **kwargs):
+    def process(self, formdata=None, obj=None, data=None, defaults=None, **kwargs):
         """
         Take form, object data, and keyword arg input and have the fields
         process them.
@@ -111,25 +111,21 @@ class BaseForm(object):
             If provided, must be a dictionary of data. This is only used if
             `formdata` is empty or not provided and `obj` does not contain
             an attribute named the same as the field.
-        :param `**kwargs`:
+        :param defaults:
             If `formdata` is empty or not provided and `obj` does not contain
             an attribute named the same as a field, form will assign the value
             of a matching keyword argument to the field, if one exists.
         """
         formdata = self.meta.wrap_formdata(self, formdata)
+        if defaults is None:
+            defaults = {}
 
-        if data is not None:
-            # XXX we want to eventually process 'data' as a new entity.
-            #     Temporarily, this can simply be merged with kwargs.
-            kwargs = dict(data, **kwargs)
+        if kwargs:
+            # Temporary, lets us keep the kwargs for a little while, deprecated.
+            defaults = dict(defaults, **kwargs)
 
         for name, field, in iteritems(self._fields):
-            if obj is not None and hasattr(obj, name):
-                field.process(formdata, getattr(obj, name))
-            elif name in kwargs:
-                field.process(formdata, kwargs[name])
-            else:
-                field.process(formdata)
+            field.process(formdata, data, obj, defaults)
 
     def validate(self, extra_validators=None):
         """
@@ -275,7 +271,7 @@ class Form(with_metaclass(FormMeta, BaseForm)):
             # Set all the fields to attributes so that they obscure the class
             # attributes with the same names.
             setattr(self, name, field)
-        self.process(formdata, obj, data=data, **kwargs)
+        self.process(formdata, obj, data=data, defaults=kwargs)
 
     def __setitem__(self, name, value):
         raise TypeError('Fields may not be added to Form instances, only classes.')
