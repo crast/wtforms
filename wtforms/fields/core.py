@@ -247,32 +247,54 @@ class Field(object):
         """
         pass
 
-    def process(self, formdata, data=unset_value):
+    def process(self, formdata, data, obj, defaults):
         """
-        Process incoming data, calling process_data, process_formdata as needed,
-        and run filters.
+        Process incoming data, coercing as needed and running filters.
 
-        If `data` is not provided, process_data will be called on the field's
-        default.
+        This method will call process_formdata, process_data, process_obj
+        as needed.
 
         Field subclasses usually won't override this, instead overriding the
         process_formdata and process_data methods. Only override this for
         special advanced processing, such as when a field encapsulates many
         inputs.
+
+        :param formdata:
+            A multi-dict wrapper that comes from form input.
+        :param dict data:
+            If provided, this is a dictionary containing data to be processed
+            (potentially from JSON or other sources) and this data will be
+            coerced by the process_data function.
+        :param obj:
+            The object (often a model instance) used as input for this form.
+            If this is not `None`, then we use anything with the attribute
+            matching this field's short name on that object as data. This
+            data is not coerced.
+        :param dict defaults:
+            This is a dictionary of defaults, typically this will come from
+            the keyword args of the form constructor.
+            If defaults contains a key with the same name as this field, then
+            we use this instead of the field-assigned default.
         """
         self.process_errors = []
-        if data is unset_value:
+
+        if self.short_name in defaults:
+            self.data = defaults[self.short_name]
+        else:
             try:
-                data = self.default()
+                self.data = self.default()
             except TypeError:
-                data = self.default
+                self.data = self.default
 
-        self.object_data = data
+        if obj is not None and hasattr(obj, self.short_name):
+            self.object_data = getattr(obj, self.short_name)
+            self.process_obj(self.object_data)
 
-        try:
-            self.process_data(data)
-        except ValueError as e:
-            self.process_errors.append(e.args[0])
+        if data is not None:
+            try:
+                self.process_data(data.get(self.short_name))
+            except ValueError as e:
+                self.process_errors.append(e.args[0])
 
         if formdata:
             try:
@@ -292,14 +314,22 @@ class Field(object):
 
     def process_data(self, value):
         """
-        Process the Python data applied to this field and store the result.
+        Process the data applied to this field and store the result.
 
-        This will be called during form construction by the form's `kwargs` or
-        `obj` argument.
+        Data will be coerced
 
         :param value: The python object containing the value to process.
         """
         self.data = value
+
+    def process_obj(self, obj):
+        """
+        Process the object data that is applied to this field.
+
+        It is expected data from a model object like 'obj' is already
+        in the correct data type, and obj data is not coerced.
+        """
+        self.data = obj
 
     def process_formdata(self, valuelist):
         """
@@ -421,10 +451,11 @@ class SelectFieldBase(Field):
         raise NotImplementedError()
 
     def __iter__(self):
-        opts = dict(widget=self.option_widget, _name=self.name, _form=None, _meta=self.meta)
+        prefix = self.name[:-len(self.short_name)]
+        opts = dict(widget=self.option_widget, _name=self.short_name, _prefix=prefix, _form=None, _meta=self.meta)
         for i, (value, label, checked) in enumerate(self.iter_choices()):
             opt = self._Option(label=label, id='%s-%d' % (self.id, i), **opts)
-            opt.process(None, value)
+            opt.process(None, None, None, {self.short_name: value})
             opt.checked = checked
             yield opt
 
@@ -775,7 +806,7 @@ class FormField(Field):
         if validators:
             raise TypeError('FormField does not accept any validators. Instead, define them on the enclosed form.')
 
-    def process(self, formdata, data=unset_value):
+    def process(self, formdata, data, obj, defaults):
         if data is unset_value:
             try:
                 data = self.default()
@@ -856,7 +887,7 @@ class FieldList(Field):
         self.last_index = -1
         self._prefix = kwargs.get('_prefix', '')
 
-    def process(self, formdata, data=unset_value):
+    def process(self, formdata, data, obj, defaults):
         self.entries = []
         if data is unset_value or not data:
             try:
@@ -947,7 +978,7 @@ class FieldList(Field):
         name = '%s-%d' % (self.short_name, index)
         id = '%s-%d' % (self.id, index)
         field = self.unbound_field.bind(form=None, name=name, prefix=self._prefix, id=id, _meta=self.meta)
-        field.process(formdata, data)
+        field.process(formdata, data, self.object_data, {})
         self.entries.append(field)
         return field
 
