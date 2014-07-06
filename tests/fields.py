@@ -34,11 +34,11 @@ class DefaultsTest(TestCase):
             return expected
 
         test_value = TextField(default=expected).bind(Form(), 'a')
-        test_value.process(None)
+        test_value.process(None, None, None, {})
         self.assertEqual(test_value.data, expected)
 
         test_callable = TextField(default=default_callable).bind(Form(), 'a')
-        test_callable.process(None)
+        test_callable.process(None, None, None, {})
         self.assertEqual(test_callable.data, expected)
 
 
