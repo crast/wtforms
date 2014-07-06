@@ -341,7 +341,7 @@ class Field(object):
         :param valuelist: A list of strings to process.
         """
         if valuelist:
-            self.data = valuelist[0]
+            self.process_data(valuelist[0])
 
     def populate_obj(self, obj, name):
         """
@@ -606,13 +606,12 @@ class IntegerField(Field):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = int(valuelist[0])
-            except ValueError:
-                self.data = None
-                raise ValueError(self.gettext('Not a valid integer value'))
+    def process_data(self, value):
+        try:
+            self.data = int(value)
+        except ValueError:
+            self.data = None
+            raise ValueError(self.gettext('Not a valid integer value'))
 
 
 class DecimalField(LocaleAwareNumberField):
@@ -669,16 +668,22 @@ class DecimalField(LocaleAwareNumberField):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                if self.use_locale:
-                    self.data = self._parse_decimal(valuelist[0])
-                else:
-                    self.data = decimal.Decimal(valuelist[0])
-            except (decimal.InvalidOperation, ValueError):
-                self.data = None
-                raise ValueError(self.gettext('Not a valid decimal value'))
+    def process_data(self, data):
+        # Don't use isinstance, to find any decimal-compatible type.
+        if hasattr(data, 'quantize'):
+            self.data = data
+        else:
+            self.process_string(data)
+
+    def process_string(self, data):
+        try:
+            if self.use_locale:
+                self.data = self._parse_decimal(data)
+            else:
+                self.data = decimal.Decimal(data)
+        except (decimal.InvalidOperation, ValueError):
+            self.data = None
+            raise ValueError(self.gettext('Not a valid decimal value'))
 
 
 class FloatField(Field):
@@ -699,13 +704,12 @@ class FloatField(Field):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = float(valuelist[0])
-            except ValueError:
-                self.data = None
-                raise ValueError(self.gettext('Not a valid float value'))
+    def process_data(self, value):
+        try:
+            self.data = float(value)
+        except ValueError:
+            self.data = None
+            raise ValueError(self.gettext('Not a valid float value'))
 
 
 class BooleanField(Field):
