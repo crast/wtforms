@@ -227,6 +227,23 @@ class Field(object):
 
         return False
 
+    def _resolve_default(self, defaults):
+        """
+        Helper to resolve a default value
+
+        :param dict defaults:
+            The dictionary of defaults given usually by the form constructor.
+        :return:
+            A default value.
+        """
+        if self.short_name in defaults:
+            return defaults[self.short_name]
+        else:
+            try:
+                return self.default()
+            except TypeError:
+                return self.default
+
     def pre_validate(self, form):
         """
         Override if you need field-level validation. Runs before any other
@@ -277,15 +294,7 @@ class Field(object):
             we use this instead of the field-assigned default.
         """
         self.process_errors = []
-
-        if self.short_name in defaults:
-            default = defaults[self.short_name]
-        else:
-            try:
-                default = self.default()
-            except TypeError:
-                default = self.default
-
+        default = self._resolve_default(defaults)
         self.process_default(default)
 
         if obj is not None and hasattr(obj, self.short_name):
