@@ -323,6 +323,29 @@ class Field(object):
         except ValueError as e:
             self.process_errors.append(e.args[0])
 
+    def process_input(self, value):
+        """
+        Process basic input from either form or json data.
+
+        This is a simplification which the vast majority of simple fields
+        can use to process data, without having to care about the lower-level
+        details of the form.
+
+        :param value:
+            A value to be coerced. The type may be one of any of the valid JSON
+            types, in addition to a basic unicode string
+        :return:
+            If this method returns NotImplemented, then process() will call
+            process_form_input or process_json_input as applicable.
+        """
+        return NotImplemented
+
+    def process_form_input(self, valuelist):
+        pass
+
+    def process_json_input(self, value):
+        pass
+
     def process_data(self, value):
         """
         Process the data applied to this field and store the result.
