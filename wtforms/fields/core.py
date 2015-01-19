@@ -227,7 +227,7 @@ class Field(object):
 
         return False
 
-    def _resolve_default(self, defaults):
+    def _resolve_default(self, form_input):
         """
         Helper to resolve a default value
 
@@ -236,13 +236,15 @@ class Field(object):
         :return:
             A default value.
         """
-        if self.short_name in defaults:
-            return defaults[self.short_name]
-        else:
-            try:
-                return self.default()
-            except TypeError:
-                return self.default
+        if form_input is not None:
+            default = form_input.get_default(self)
+            if default is not unset_value:
+                return default
+
+        try:
+            return self.default()
+        except TypeError:
+            return self.default
 
     def pre_validate(self, form):
         """
@@ -264,7 +266,7 @@ class Field(object):
         """
         pass
 
-    def process(self, formdata, data, obj, defaults):
+    def process(self, formdata, data=unset_value):
         """
         Process incoming data, coercing as needed and running filters.
 
@@ -293,13 +295,50 @@ class Field(object):
             If defaults contains a key with the same name as this field, then
             we use this instead of the field-assigned default.
         """
+        if data is not None or (formdata is not None and not hasattr(formdata, 'form_input')):
+            raise Exception('blah')
+            return self.process_classic(formdata, data)
+
         self.process_errors = []
-        default = self._resolve_default(defaults)
+        try:
+            default = self._resolve_default(formdata)
+            self.process_default(default)
+        except ValueError as e:
+            self.process_errors.append(e.args[0])
+
+        if formdata is not None:
+            if formdata.model is not None:
+                self.process_model_input(formdata)
+
+            # Process one of JSON or form input
+            json_value = formdata.get_json_input(self)
+            if json_value is not unset_value:
+                self.process_json_input(json_value)
+
+            if formdata.form_input is not None:
+                try:
+                    if self.name in formdata.form_input:
+                        form_input = self.raw_data = formdata.form_input.getlist(self.name)
+                        self.process_form_input(form_input)
+                    else:
+                        self.process_form_input([])
+                except ValueError as e:
+                    self.process_errors.append(e.args[0])
+
+        try:
+            for filter in self.filters:
+                self.data = filter(self.data)
+        except ValueError as e:
+            self.process_errors.append(e.args[0])
+
+    def process_classic(self, formdata, data, obj):
+        self.process_errors = []
+        default = self._resolve_default(formdata)
         self.process_default(default)
 
         if obj is not None and hasattr(obj, self.short_name):
             self.object_data = getattr(obj, self.short_name)
-            self.process_obj(self.object_data)
+            self.process_model_input(self.object_data)
 
         if data is not None:
             try:
@@ -341,20 +380,24 @@ class Field(object):
         return NotImplemented
 
     def process_form_input(self, valuelist):
-        pass
+        # Step 1: Try the legacy processing.
+        if self.process_formdata(valuelist) is not NotImplemented:
+            return
+
+        # Step 2: Try the process_input one-stop shop
+        if valuelist:
+            retval = self.process_input(valuelist[0])
+        else:
+            retval = NotImplemented
+
+        if retval is NotImplemented:
+            if valuelist:
+                self.data = valuelist[0]
 
     def process_json_input(self, value):
-        pass
-
-    def process_data(self, value):
-        """
-        Process the data applied to this field and store the result.
-
-        Data will be coerced.
-
-        :param value: The value to process.
-        """
-        self.data = value
+        retval = self.process_input(value)
+        if retval is NotImplemented:
+            self.data = value
 
     def process_default(self, value):
         """
@@ -363,16 +406,33 @@ class Field(object):
         This exists because there's sometimes a need for fields to
         process a default value (although rare)
         """
-        self.data = value
+        if self.process_data(value) is NotImplemented:
+            self.data = value
 
-    def process_obj(self, obj):
+    def process_model_input(self, formdata):
         """
         Process the object data that is applied to this field.
 
         It is expected data from a model object like 'obj' is already
-        in the correct data type, and obj data is not coerced.
+        in the correct data type, and by default obj data is not coerced.
         """
-        self.data = obj
+        model_input = formdata.get_model_data(self)
+        # Step 1: Legacy processing
+        retval = self.process_data(model_input)
+        if retval is not NotImplemented:
+            return
+
+        self.data = model_input
+
+    def process_data(self, value):
+        """
+        Legacy data processing function.
+
+        Do not implement this; this exists only for WTForms 2.x compatibility.
+
+        :param value: The value to process.
+        """
+        return NotImplemented
 
     def process_formdata(self, valuelist):
         """
@@ -383,8 +443,7 @@ class Field(object):
 
         :param valuelist: A list of strings to process.
         """
-        if valuelist:
-            self.process_data(valuelist[0])
+        return NotImplemented
 
     def populate_obj(self, obj, name):
         """
@@ -498,7 +557,7 @@ class SelectFieldBase(Field):
         opts = dict(widget=self.option_widget, _name=self.short_name, _prefix=prefix, _form=None, _meta=self.meta)
         for i, (value, label, checked) in enumerate(self.iter_choices()):
             opt = self._Option(label=label, id='%s-%d' % (self.id, i), **opts)
-            opt.process(None, None, None, {self.short_name: value})
+            opt.process(self.meta.wrap_input(None, None, None, {self.short_name: value}), None)
             opt.checked = checked
             yield opt
 
@@ -521,7 +580,7 @@ class SelectField(SelectFieldBase):
         for value, label in self.choices:
             yield (value, label, self.coerce(value) == self.data)
 
-    def process_data(self, value):
+    def process_input(self, value):
         try:
             self.data = self.coerce(value)
         except (ValueError, TypeError):
@@ -652,7 +711,7 @@ class IntegerField(Field):
         else:
             return ''
 
-    def process_data(self, value):
+    def process_input(self, value):
         try:
             self.data = int(value)
         except ValueError:
@@ -714,11 +773,11 @@ class DecimalField(LocaleAwareNumberField):
         else:
             return ''
 
-    def process_data(self, data):
+    def process_input(self, data):
         # Don't use isinstance, to find any decimal-compatible type.
         if hasattr(data, 'quantize'):
             self.data = data
-        else:
+        elif data is not None:
             self.process_string(data)
 
     def process_string(self, data):
@@ -750,7 +809,7 @@ class FloatField(Field):
         else:
             return ''
 
-    def process_data(self, value):
+    def process_input(self, value):
         try:
             self.data = float(value)
         except ValueError:
@@ -775,14 +834,20 @@ class BooleanField(Field):
         if false_values is not None:
             self.false_values = false_values
 
-    def process_data(self, value):
-        self.data = bool(value)
+    def process_input(self, value):
+        if value in self.false_values:
+            self.data = False
+        else:
+            self.data = bool(value)
 
-    def process_formdata(self, valuelist):
+    def process_form_input(self, valuelist):
         if not valuelist or valuelist[0] in self.false_values:
             self.data = False
         else:
             self.data = True
+
+    def process_default(self, value):
+        self.process_input(value)
 
     def _value(self):
         if self.raw_data:
@@ -856,7 +921,7 @@ class FormField(Field):
         if validators:
             raise TypeError('FormField does not accept any validators. Instead, define them on the enclosed form.')
 
-    def process(self, formdata, data, obj, defaults):
+    def process(self, formdata, data=unset_value):
         if data is unset_value:
             try:
                 data = self.default()
@@ -937,7 +1002,7 @@ class FieldList(Field):
         self.last_index = -1
         self._prefix = kwargs.get('_prefix', '')
 
-    def process(self, formdata, data, obj, defaults):
+    def process(self, formdata, data=unset_value):
         self.entries = []
         if data is unset_value or not data:
             try:

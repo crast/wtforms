@@ -124,8 +124,10 @@ class BaseForm(object):
             # Temporary, lets us keep the kwargs for a little while, deprecated.
             defaults = dict(defaults, **kwargs)
 
+        form_input = self.meta.wrap_input(formdata, data, obj, defaults)
+
         for name, field, in iteritems(self._fields):
-            field.process(formdata, data, obj, defaults)
+            field.process(form_input, None)
 
     def validate(self, extra_validators=None):
         """

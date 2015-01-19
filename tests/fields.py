@@ -34,11 +34,11 @@ class DefaultsTest(TestCase):
             return expected
 
         test_value = TextField(default=expected).bind(Form(), 'a')
-        test_value.process(None, None, None, {})
+        test_value.process(None, None)
         self.assertEqual(test_value.data, expected)
 
         test_callable = TextField(default=default_callable).bind(Form(), 'a')
-        test_callable.process(None, None, None, {})
+        test_callable.process(None, None)
         self.assertEqual(test_callable.data, expected)
 
 
@@ -156,10 +156,6 @@ class FieldTest(TestCase):
 
     def test_unicode_coerce(self):
         self.assertEqual(text_type(self.field), self.field())
-
-    def test_process_formdata(self):
-        Field.process_formdata(self.field, [42])
-        self.assertEqual(self.field.data, 42)
 
     def test_meta_attribute(self):
         # Can we pass in meta via _form?

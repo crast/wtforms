@@ -1,3 +1,4 @@
+from wtforms.utils import unset_value
 
 
 class FormInput(object):
@@ -22,14 +23,26 @@ class FormInput(object):
                 return valuelist[0]
             else:
                 return None
-        if self.json_input is not None:
+        json_input = self.get_json_input(field)
+        if json_input is not unset_value:
+            return json_input
+
+        return unset_value
+
+    def get_json_input(self, field):
+        if self.json_input is not None and field.short_name in self.json_input:
             return self.json_input[field.short_name]
+        return unset_value
 
     def get_model_data(self, field):
-        return getattr(self.obj, field.short_name)
+        if self.model is not None:
+            return getattr(self.model, field.short_name)
 
     def get_default(self, field):
         if field.short_name in self.defaults:
             return self.defaults[field.short_name]
         else:
-            return field.default  # XXX TODO
+            return unset_value
+
+
+    # -- Legacy support functionality
