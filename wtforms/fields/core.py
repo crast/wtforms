@@ -295,7 +295,7 @@ class Field(object):
             If defaults contains a key with the same name as this field, then
             we use this instead of the field-assigned default.
         """
-        if data is not None or (formdata is not None and not hasattr(formdata, 'form_input')):
+        if data not in (None, unset_value) or (formdata is not None and not hasattr(formdata, 'form_input')):
             raise Exception('blah')
             return self.process_classic(formdata, data)
 
@@ -418,10 +418,14 @@ class Field(object):
         """
         model_input = formdata.get_model_data(self)
         # Step 1: Legacy processing
-        retval = self.process_data(model_input)
-        if retval is not NotImplemented:
+        if self.process_data(model_input) is not NotImplemented:
             return
 
+        # Step 2: Try process_input instead
+        if self.process_input(model_input) is not NotImplemented:
+            return
+
+        # Finally, just assign this to the field
         self.data = model_input
 
     def process_data(self, value):
@@ -557,7 +561,7 @@ class SelectFieldBase(Field):
         opts = dict(widget=self.option_widget, _name=self.short_name, _prefix=prefix, _form=None, _meta=self.meta)
         for i, (value, label, checked) in enumerate(self.iter_choices()):
             opt = self._Option(label=label, id='%s-%d' % (self.id, i), **opts)
-            opt.process(self.meta.wrap_input(None, None, None, {self.short_name: value}), None)
+            opt.process(self.meta.wrap_input(None, {self.short_name: value}, None, {self.short_name: value}), None)
             opt.checked = checked
             yield opt
 
@@ -585,13 +589,13 @@ class SelectField(SelectFieldBase):
             self.data = self.coerce(value)
         except (ValueError, TypeError):
             self.data = None
+            raise ValueError(self.gettext('Invalid Choice: could not coerce'))
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = self.coerce(valuelist[0])
-            except ValueError:
-                raise ValueError(self.gettext('Invalid Choice: could not coerce'))
+    def process_default(self, value):
+        try:
+            self.process_input(value)
+        except ValueError:
+            pass
 
     def pre_validate(self, form):
         for v, _ in self.choices:
@@ -835,12 +839,14 @@ class BooleanField(Field):
             self.false_values = false_values
 
     def process_input(self, value):
+        print 'pi', self.name, value
         if value in self.false_values:
             self.data = False
         else:
             self.data = bool(value)
 
     def process_form_input(self, valuelist):
+        print 'fi', self.name, valuelist
         if not valuelist or valuelist[0] in self.false_values:
             self.data = False
         else:
@@ -1093,7 +1099,7 @@ class FieldList(Field):
         name = '%s-%d' % (self.short_name, index)
         id = '%s-%d' % (self.id, index)
         field = self.unbound_field.bind(form=None, name=name, prefix=self._prefix, id=id, _meta=self.meta)
-        field.process(formdata, data, self.object_data, {})
+        field.process(formdata, data)
         self.entries.append(field)
         return field
 

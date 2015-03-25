@@ -44,5 +44,19 @@ class FormInput(object):
         else:
             return unset_value
 
-
     # -- Legacy support functionality
+
+    def __contains__(self, key):
+        if self.form_input is None:
+            return False
+        return key in self.form_input
+
+    def __iter__(self):
+        if self.form_input is None:
+            return iter(())
+        return iter(self.form_input)
+
+    def getlist(self, key):
+        if self.form_input is None:
+            return None
+        return self.form_input.getlist(key)

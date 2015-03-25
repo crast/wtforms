@@ -326,9 +326,9 @@ class RadioFieldTest(TestCase):
 
     def test_text_coercion(self):
         # Regression test for text coercsion scenarios where the value is a boolean.
-        coerce_func = lambda x: False if x == 'False' else bool(x)
         F = make_form(a=RadioField(choices=[(True, 'yes'), (False, 'no')], coerce=coerce_func))
         form = F()
+        self.assertEqual(form.a.data, False)
         self.assertEqual(
             form.a(),
             '''<ul id="a">'''
