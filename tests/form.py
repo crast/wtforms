@@ -201,7 +201,7 @@ class FormTest(TestCase):
         form = self.F(data=data)
         self.assertEqual(form.test.data, 'foo')
         form = self.F(data=data, test='bar')
-        self.assertEqual(form.test.data, 'bar')
+        self.assertEqual(form.test.data, 'foo')
 
 
 class MetaTest(TestCase):

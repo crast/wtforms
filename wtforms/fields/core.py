@@ -7,6 +7,7 @@ import itertools
 from wtforms import widgets
 from wtforms.compat import text_type, izip
 from wtforms.i18n import DummyTranslations
+from wtforms.input import FormInput
 from wtforms.validators import StopValidation
 from wtforms.utils import unset_value
 
@@ -231,6 +232,25 @@ class Field(object):
 
         return False
 
+    def _resolve_default(self, form_input):
+        """
+        Helper to resolve a default value
+
+        :param form_input:
+            The form_input default.
+        :return:
+            A default value.
+        """
+        if form_input is not None:
+            default = form_input.get_default(self)
+            if default is not unset_value:
+                return default
+
+        try:
+            return self.default()
+        except TypeError:
+            return self.default
+
     def pre_validate(self, form):
         """
         Override if you need field-level validation. Runs before any other
@@ -253,40 +273,54 @@ class Field(object):
 
     def process(self, formdata, data=unset_value):
         """
-        Process incoming data, calling process_data, process_formdata as needed,
-        and run filters.
+        Process incoming data, coercing as needed and running filters.
 
-        If `data` is not provided, process_data will be called on the field's
-        default.
+        This method will call process_formdata, process_data, process_obj
+        as needed.
 
         Field subclasses usually won't override this, instead overriding the
         process_formdata and process_data methods. Only override this for
         special advanced processing, such as when a field encapsulates many
         inputs.
+
+        :param formdata:
+            Form input data in the form of an input wrapper.
+            :class:`wtforms.input.FormInput` or something providing a similar
+            contract.
+        :param data:
+            Mainly for WTForms 2.x support, if data is provided, then we are
+            processing data coming from a WTForms 2.x compatible library.
+            This path will be removed in WTForms 3.1.
+            data will never be passed by WTForms 3.0.
         """
+        if data not in (None, unset_value) or (formdata is not None and not hasattr(formdata, 'form_input')):
+            raise Exception('blah, somehow we have old process code.')
+
         self.process_errors = []
-        if data is unset_value:
-            try:
-                data = self.default()
-            except TypeError:
-                data = self.default
-
-        self.object_data = data
-
         try:
-            self.process_data(data)
+            default = self._resolve_default(formdata)
+            self.process_default(default)
         except ValueError as e:
             self.process_errors.append(e.args[0])
 
-        if formdata:
-            try:
-                if self.name in formdata:
-                    self.raw_data = formdata.getlist(self.name)
-                else:
-                    self.raw_data = []
-                self.process_formdata(self.raw_data)
-            except ValueError as e:
-                self.process_errors.append(e.args[0])
+        if formdata is not None:
+            if formdata.model is not None:
+                self.process_model_input(formdata)
+
+            # Process one of JSON or form input
+            json_value = formdata.get_json_input(self)
+            if json_value is not unset_value:
+                self.process_json_input(json_value)
+
+            if formdata.form_input is not None:
+                try:
+                    if self.name in formdata.form_input:
+                        form_input = self.raw_data = formdata.form_input.getlist(self.name)
+                        self.process_form_input(form_input)
+                    else:
+                        self.process_form_input([])
+                except ValueError as e:
+                    self.process_errors.append(e.args[0])
 
         try:
             for filter in self.filters:
@@ -294,16 +328,85 @@ class Field(object):
         except ValueError as e:
             self.process_errors.append(e.args[0])
 
+    def process_input(self, value):
+        """
+        Process basic input from either form or json data.
+
+        This is a simplification which the vast majority of simple fields
+        can use to process data, without having to care about the lower-level
+        details of the form.
+
+        :param value:
+            A value to be coerced. The type may be one of any of the valid JSON
+            types, in addition to a basic unicode string
+        :return:
+            If this method returns NotImplemented, then process() will call
+            process_form_input or process_json_input as applicable.
+        """
+        return NotImplemented
+
+    def process_form_input(self, valuelist):
+        # Step 1: Try the legacy processing.
+        if self.process_formdata(valuelist) is not NotImplemented:
+            return
+
+        # Step 2: Try the process_input one-stop shop
+        if valuelist:
+            retval = self.process_input(valuelist[0])
+        else:
+            retval = NotImplemented
+
+        if retval is NotImplemented:
+            if valuelist:
+                self.data = valuelist[0]
+
+    def process_json_input(self, value):
+        retval = self.process_input(value)
+        if retval is NotImplemented:
+            self.data = value
+
+    def process_default(self, value):
+        """
+        Process a default value and store the result.
+
+        This exists because there's sometimes a need for fields to
+        process a default value (although rare)
+        """
+        if self.process_data(value) is NotImplemented:
+            self.data = value
+
+    def process_model_input(self, formdata):
+        """
+        Process the object data that is applied to this field.
+
+        It is expected data from a model object like 'obj' is already
+        in the correct data type, and by default obj data is not coerced.
+        """
+        model_input = formdata.get_model_input(self)
+        if model_input is unset_value:
+            self.data = None
+            return
+
+        # Step 1: Legacy processing
+        if self.process_data(model_input) is not NotImplemented:
+            return
+
+        # Step 2: Try process_input instead
+        if self.process_input(model_input) is not NotImplemented:
+            return
+
+        # Finally, just assign this to the field
+        self.data = model_input
+
     def process_data(self, value):
         """
-        Process the Python data applied to this field and store the result.
+        Legacy data processing function.
 
-        This will be called during form construction by the form's `kwargs` or
-        `obj` argument.
+        Do not implement this; this exists only for WTForms 2.x compatibility.
 
-        :param value: The python object containing the value to process.
+        :param value: The value to process.
         """
-        self.data = value
+        return NotImplemented
 
     def process_formdata(self, valuelist):
         """
@@ -314,8 +417,7 @@ class Field(object):
 
         :param valuelist: A list of strings to process.
         """
-        if valuelist:
-            self.data = valuelist[0]
+        return NotImplemented
 
     def populate_obj(self, obj, name):
         """
@@ -425,10 +527,11 @@ class SelectFieldBase(Field):
         raise NotImplementedError()
 
     def __iter__(self):
-        opts = dict(widget=self.option_widget, _name=self.name, _form=None, _meta=self.meta)
+        prefix = self.name[:-len(self.short_name)]
+        opts = dict(widget=self.option_widget, _name=self.short_name, _prefix=prefix, _form=None, _meta=self.meta)
         for i, (value, label, checked) in enumerate(self.iter_choices()):
             opt = self._Option(label=label, id='%s-%d' % (self.id, i), **opts)
-            opt.process(None, value)
+            opt.process(self.meta.wrap_input(None, {self.short_name: value}, None, {self.short_name: value}))
             opt.checked = checked
             yield opt
 
@@ -442,27 +545,30 @@ class SelectFieldBase(Field):
 class SelectField(SelectFieldBase):
     widget = widgets.Select()
 
-    def __init__(self, label=None, validators=None, coerce=text_type, choices=None, **kwargs):
+    def __init__(self, label=None, validators=None, coerce_func=unset_value, choices=None, **kwargs):
+        if coerce_func is unset_value:
+            coerce_func = kwargs.pop('coerce', text_type)
         super(SelectField, self).__init__(label, validators, **kwargs)
-        self.coerce = coerce
+
+        self.coerce = coerce_func
         self.choices = choices
 
     def iter_choices(self):
         for value, label in self.choices:
             yield (value, label, self.coerce(value) == self.data)
 
-    def process_data(self, value):
+    def process_input(self, value):
         try:
             self.data = self.coerce(value)
         except (ValueError, TypeError):
             self.data = None
+            raise ValueError(self.gettext('Invalid Choice: could not coerce'))
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = self.coerce(valuelist[0])
-            except ValueError:
-                raise ValueError(self.gettext('Invalid Choice: could not coerce'))
+    def process_default(self, value):
+        try:
+            self.process_input(value)
+        except ValueError:
+            pass
 
     def pre_validate(self, form):
         for v, _ in self.choices:
@@ -485,13 +591,13 @@ class SelectMultipleField(SelectField):
             selected = self.data is not None and self.coerce(value) in self.data
             yield (value, label, selected)
 
-    def process_data(self, value):
+    def process_input(self, value):
         try:
             self.data = list(self.coerce(v) for v in value)
         except (ValueError, TypeError):
             self.data = None
 
-    def process_formdata(self, valuelist):
+    def process_form_input(self, valuelist):
         try:
             self.data = list(self.coerce(x) for x in valuelist)
         except ValueError:
@@ -523,7 +629,7 @@ class StringField(Field):
     """
     widget = widgets.TextInput()
 
-    def process_formdata(self, valuelist):
+    def process_form_input(self, valuelist):
         if valuelist:
             self.data = valuelist[0]
         else:
@@ -579,13 +685,12 @@ class IntegerField(Field):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = int(valuelist[0])
-            except ValueError:
-                self.data = None
-                raise ValueError(self.gettext('Not a valid integer value'))
+    def process_input(self, value):
+        try:
+            self.data = int(value)
+        except ValueError:
+            self.data = None
+            raise ValueError(self.gettext('Not a valid integer value'))
 
 
 class DecimalField(LocaleAwareNumberField):
@@ -642,16 +747,22 @@ class DecimalField(LocaleAwareNumberField):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                if self.use_locale:
-                    self.data = self._parse_decimal(valuelist[0])
-                else:
-                    self.data = decimal.Decimal(valuelist[0])
-            except (decimal.InvalidOperation, ValueError):
-                self.data = None
-                raise ValueError(self.gettext('Not a valid decimal value'))
+    def process_input(self, data):
+        # Don't use isinstance, to find any decimal-compatible type.
+        if hasattr(data, 'quantize'):
+            self.data = data
+        elif data is not None:
+            self.process_string(data)
+
+    def process_string(self, data):
+        try:
+            if self.use_locale:
+                self.data = self._parse_decimal(data)
+            else:
+                self.data = decimal.Decimal(data)
+        except (decimal.InvalidOperation, ValueError):
+            self.data = None
+            raise ValueError(self.gettext('Not a valid decimal value'))
 
 
 class FloatField(Field):
@@ -672,13 +783,12 @@ class FloatField(Field):
         else:
             return ''
 
-    def process_formdata(self, valuelist):
-        if valuelist:
-            try:
-                self.data = float(valuelist[0])
-            except ValueError:
-                self.data = None
-                raise ValueError(self.gettext('Not a valid float value'))
+    def process_input(self, value):
+        try:
+            self.data = float(value)
+        except ValueError:
+            self.data = None
+            raise ValueError(self.gettext('Not a valid float value'))
 
 
 class BooleanField(Field):
@@ -700,14 +810,20 @@ class BooleanField(Field):
         if false_values is not None:
             self.false_values = false_values
 
-    def process_data(self, value):
-        self.data = bool(value)
+    def process_input(self, value):
+        if value in self.false_values:
+            self.data = False
+        else:
+            self.data = bool(value)
 
-    def process_formdata(self, valuelist):
+    def process_form_input(self, valuelist):
         if not valuelist or valuelist[0] in self.false_values:
             self.data = False
         else:
             self.data = True
+
+    def process_default(self, value):
+        self.process_input(value)
 
     def _value(self):
         if self.raw_data:
@@ -782,20 +898,28 @@ class FormField(Field):
             raise TypeError('FormField does not accept any validators. Instead, define them on the enclosed form.')
 
     def process(self, formdata, data=unset_value):
-        if data is unset_value:
-            try:
-                data = self.default()
-            except TypeError:
-                data = self.default
-            self._obj = data
+        construct = {
+            'formdata': formdata.form_input,
+            'prefix': self.name + self.separator,
+        }
+        json = formdata.get_json_input(self)
+        if json is not unset_value:
+            construct['data'] = json
+        model = formdata.get_model_input(self)
 
-        self.object_data = data
+        # Ordering is important here. model resolution can be overwritten by defaults.
+        default = self._resolve_default(formdata)
+        if default not in (None, unset_value):
+            if isinstance(default, dict):
+                construct.update(default)
+            elif model is unset_value:
+                model = default
 
-        prefix = self.name + self.separator
-        if isinstance(data, dict):
-            self.form = self.form_class(formdata=formdata, prefix=prefix, **data)
-        else:
-            self.form = self.form_class(formdata=formdata, obj=data, prefix=prefix)
+        if model is not unset_value:
+            construct['model'] = model
+            self._obj = model
+
+        self.form = self.form_class(**construct)
 
     def validate(self, form, extra_validators=tuple()):
         if extra_validators:
@@ -806,8 +930,12 @@ class FormField(Field):
         candidate = getattr(obj, name, None)
         if candidate is None:
             if self._obj is None:
-                raise TypeError('populate_obj: cannot find a value to populate from the provided obj or input data/defaults')
-            candidate = self._obj
+                candidate = self._resolve_default(None)
+                if candidate is None:
+                    msg = 'populate_obj: {name} cannot find a value to populate from the provided obj or input data/defaults'
+                    raise TypeError(msg.format(name=self.name))
+            else:
+                candidate = self._obj
             setattr(obj, name, candidate)
 
         self.form.populate_obj(candidate)
@@ -864,16 +992,35 @@ class FieldList(Field):
 
     def process(self, formdata, data=unset_value):
         self.entries = []
-        if data is unset_value or not data:
-            try:
-                data = self.default()
-            except TypeError:
-                data = self.default
 
-        self.object_data = data
-
-        if formdata:
+        if formdata.form_input:
+            # Form input is highest priority, it drives the indices
             indices = sorted(set(self._extract_indices(self.name, formdata)))
+            if self.max_entries:
+                indices = indices[:self.max_entries]
+        else:
+            indices = []
+
+        json_input = formdata.get_json_input(self)
+        if json_input in (None, unset_value):
+            json_input = []
+
+        model_input = formdata.get_model_input(self)
+        if model_input in (None, unset_value):
+            model_input = []
+
+        defaults = self._resolve_default(formdata)
+        if defaults in (None, unset_value):
+            defaults = []
+
+        zip_longest = getattr(itertools, 'izip_longest', None) or itertools.zip_longest
+        zipper = zip_longest(indices, json_input, model_input, defaults, fillvalue=unset_value)
+        if indices:
+            zipper = itertools.islice(zipper, len(indices))
+        for index, json, model, default in zipper:
+            self._add_entry(formdata.form_input, json, model, default, index=index)
+
+        if False:
             if self.max_entries:
                 indices = indices[:self.max_entries]
 
@@ -884,9 +1031,6 @@ class FieldList(Field):
                 except StopIteration:
                     obj_data = unset_value
                 self._add_entry(formdata, obj_data, index=index)
-        else:
-            for obj_data in data:
-                self._add_entry(formdata, obj_data)
 
         while len(self.entries) < self.min_entries:
             self._add_entry(formdata)
@@ -944,17 +1088,19 @@ class FieldList(Field):
 
         setattr(obj, name, output)
 
-    def _add_entry(self, formdata=None, data=unset_value, index=None):
+    def _add_entry(self, formdata=None, json=unset_value, model=None, default=unset_value, index=None):
         assert not self.max_entries or len(self.entries) < self.max_entries, \
             'You cannot have more than max_entries entries in this FieldList'
-        if index is None:
+        if index in (None, unset_value):
             index = self.last_index + 1
         self.last_index = index
         name = '%s-%d' % (self.short_name, index)
         id = '%s-%d' % (self.id, index)
         field = self.unbound_field.bind(form=None, name=name, prefix=self._prefix, id=id, _meta=self.meta,
                                         translations=self._translations)
-        field.process(formdata, data)
+        if model is unset_value:
+            model = None
+        field.process(self.FieldListInput(formdata, json, model, default))
         self.entries.append(field)
         return field
 
@@ -965,7 +1111,7 @@ class FieldList(Field):
         Entries added in this way will *not* receive formdata however, and can
         only receive object data.
         """
-        return self._add_entry(data=data)
+        return self._add_entry(model=data)
 
     def pop_entry(self):
         """ Removes the last entry from the list and returns it. """
@@ -985,3 +1131,13 @@ class FieldList(Field):
     @property
     def data(self):
         return [f.data for f in self.entries]
+
+    class FieldListInput(FormInput):
+        def get_json_input(self, field):
+            return self.json_input
+
+        def get_model_input(self, field):
+            return self.model
+
+        def get_default(self, field):
+            return self.defaults

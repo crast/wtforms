@@ -1,3 +1,4 @@
+from .input import FormInput
 from wtforms.utils import WebobInputWrapper
 from wtforms import i18n
 
@@ -43,6 +44,9 @@ class DefaultMeta(object):
             else:
                 raise TypeError("formdata should be a multidict-type wrapper that supports the 'getlist' method")
         return formdata
+
+    def wrap_input(self, formdata, data, model, defaults):
+        return FormInput(formdata, data, model, defaults)
 
     def render_field(self, field, render_kw):
         """

@@ -157,10 +157,6 @@ class FieldTest(TestCase):
     def test_unicode_coerce(self):
         self.assertEqual(text_type(self.field), self.field())
 
-    def test_process_formdata(self):
-        Field.process_formdata(self.field, [42])
-        self.assertEqual(self.field.data, 42)
-
     def test_meta_attribute(self):
         # Can we pass in meta via _form?
         form = self.F()
@@ -338,10 +334,12 @@ class RadioFieldTest(TestCase):
         )
 
     def test_text_coercion(self):
-        # Regression test for text coercsion scenarios where the value is a boolean.
-        coerce_func = lambda x: False if x == 'False' else bool(x)
+        # Regression test for text coercion scenarios where the value is a boolean.
+        def coerce_func(x):
+            return False if x == 'False' else bool(x)
         F = make_form(a=RadioField(choices=[(True, 'yes'), (False, 'no')], coerce=coerce_func))
         form = F()
+        self.assertEqual(form.a.data, False)
         self.assertEqual(
             form.a(),
             '''<ul id="a">'''
@@ -719,11 +717,13 @@ class FieldListTest(TestCase):
 
         # Test failure on populate
         obj2 = AttrDict(a=42)
-        self.assertRaises(TypeError, form.populate_obj, obj2)
+        form.populate_obj(obj2)
+        self.assertEqual(len(obj2.a), 2)
 
     def test_entry_management(self):
         F = make_form(a=FieldList(self.t))
         a = F(a=['hello', 'bye']).a
+        self.assertEqual(a.data, ['hello', 'bye'])
         self.assertEqual(a.pop_entry().name, 'a-1')
         self.assertEqual(a.data, ['hello'])
         a.append_entry('orange')
@@ -737,7 +737,7 @@ class FieldListTest(TestCase):
         F = make_form(a=FieldList(self.t, min_entries=1, max_entries=3))
         a = F().a
         self.assertEqual(len(a), 1)
-        self.assertEqual(a[0].data, None)
+        self.assertEqual(a[0].data, '')
         big_input = ['foo', 'flaf', 'bar', 'baz']
         self.assertRaises(AssertionError, F, a=big_input)
         pdata = DummyPostData(('a-%d' % i, v) for i, v in enumerate(big_input))

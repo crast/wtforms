@@ -95,15 +95,14 @@ class BaseForm(object):
         for name, field in iteritems(self._fields):
             field.populate_obj(obj, name)
 
-    def process(self, formdata=None, obj=None, data=None, **kwargs):
+    def process(self, formdata=None, model=None, data=None, defaults=None, **kwargs):
         """
-        Take form, object data, and keyword arg input and have the fields
-        process them.
+        Take input and have the fields process them.
 
         :param formdata:
             Used to pass data coming from the enduser, usually `request.POST` or
             equivalent.
-        :param obj:
+        :param model:
             If `formdata` is empty or not provided, this object is checked for
             attributes matching form field names, which will be used for field
             values.
@@ -111,25 +110,23 @@ class BaseForm(object):
             If provided, must be a dictionary of data. This is only used if
             `formdata` is empty or not provided and `obj` does not contain
             an attribute named the same as the field.
-        :param `**kwargs`:
+        :param defaults:
             If `formdata` is empty or not provided and `obj` does not contain
             an attribute named the same as a field, form will assign the value
             of a matching keyword argument to the field, if one exists.
         """
         formdata = self.meta.wrap_formdata(self, formdata)
+        if defaults is None:
+            defaults = {}
 
-        if data is not None:
-            # XXX we want to eventually process 'data' as a new entity.
-            #     Temporarily, this can simply be merged with kwargs.
-            kwargs = dict(data, **kwargs)
+        if kwargs:
+            # Temporary, lets us keep the kwargs for a little while, deprecated.
+            defaults = dict(defaults, **kwargs)
+
+        form_input = self.meta.wrap_input(formdata, data, model, defaults)
 
         for name, field, in iteritems(self._fields):
-            if obj is not None and hasattr(obj, name):
-                field.process(formdata, getattr(obj, name))
-            elif name in kwargs:
-                field.process(formdata, kwargs[name])
-            else:
-                field.process(formdata)
+            field.process(form_input)
 
     def validate(self, extra_validators=None):
         """
@@ -241,23 +238,27 @@ class Form(with_metaclass(FormMeta, BaseForm)):
     """
     Meta = DefaultMeta
 
-    def __init__(self, formdata=None, obj=None, prefix='', data=None, meta=None, **kwargs):
+    def __init__(self, formdata=None, model=None, prefix='', data=None, meta=None, **kwargs):
         """
         :param formdata:
-            Used to pass data coming from the enduser, usually `request.POST` or
+            Used to pass data coming from form input, usually `request.POST` or
             equivalent. formdata should be some sort of request-data wrapper which
             can get multiple parameters from the form input, and values are unicode
             strings, e.g. a Werkzeug/Django/WebOb MultiDict
-        :param obj:
-            If `formdata` is empty or not provided, this object is checked for
-            attributes matching form field names, which will be used for field
-            values.
+        :param model:
+            Used to pass data coming from an object with attributes, usually
+            something like an ORM model. The ORM model will be checked to see
+            if any attributes match field names, and will be used to get field
+            values. formdata and data always take precedence over model data.
+
+            For WTForms 2.x compatibility, the keyword-arg `obj` will be accepted
+            to mean the same thing as 'model'.
         :param prefix:
             If provided, all fields will have their name prefixed with the
             value.
         :param data:
-            Accept a dictionary of data. This is only used if `formdata` and
-            `obj` are not present.
+            Used to pass data in dictionary form. This can be used to provide data
+            coming from a source such as a database, built-in data, or JSON.
         :param meta:
             If provided, this is a dictionary of values to override attributes
             on this form's meta instance.
@@ -275,7 +276,10 @@ class Form(with_metaclass(FormMeta, BaseForm)):
             # Set all the fields to attributes so that they obscure the class
             # attributes with the same names.
             setattr(self, name, field)
-        self.process(formdata, obj, data=data, **kwargs)
+
+        if model is None and 'obj' in kwargs:
+            model = kwargs.pop('obj')
+        self.process(formdata, model, data=data, defaults=kwargs)
 
     def __setitem__(self, name, value):
         raise TypeError('Fields may not be added to Form instances, only classes.')
